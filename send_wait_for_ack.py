@@ -8,14 +8,12 @@ ubuntu command: sudo ufw allow 2442
 """
 
 from socket import socket, AF_INET, SOCK_STREAM
-from threading import Thread
+from threading import Thread, Timer
 
 import argparse
 import json
 import sys
 import time
-
-# TODO DEO add max time to wait for ack
 
 parser = argparse.ArgumentParser(
     prog="JS8Call send and wait for ACK",
@@ -42,6 +40,13 @@ parser.add_argument(
 parser.add_argument(
     "-s", "--server", default="127.0.0.1:2473", help="JS8Call API server host and port"
 )
+parser.add_argument(
+    "-w",
+    "--maxwait",
+    type=int,
+    default=600,
+    help="Max time (in seconds) to wait for an ack",
+)
 
 
 def from_message(content):
@@ -63,23 +68,31 @@ class Client(object):
     retries = 1
     retry_interval = 90
     message = "ACK ME BRO"
+    max_wait = 600
 
     # internal variables
     gotAck = False  # did we get an ack
     stop_timer = False  # should the timer thread stop
+    timed_out = False  # did we hit the max time out
     callsign = "XXXXXX"  # your callsign; will be grabbed from JS8Call
     attemptsMade = 0
 
     def __init__(
-        self, receipient, message, server="127.0.0.1:2473", retries=3, interval=120
+        self,
+        receipient,
+        message,
+        server="127.0.0.1:2473",
+        retries=3,
+        interval=120,
+        maxwait=600,
     ):
         self.receipient = receipient
         self.message = message
         self.retries = retries
         self.retry_interval = interval
+        self.max_wait = maxwait
         s = server.split(":")
         self.server = (s[0], int(s[1]))
-        print("server=", self.server)
 
     def process(self, message):
         """Process a message received from JS8Call."""
@@ -152,10 +165,16 @@ class Client(object):
                 return
             time.sleep(self.retry_interval)
 
+    def timeout(self):
+        print("Timeout reached, stopping...")
+        self.stop_timer = True
+        self.timed_out = True
+
     def connect(self):
         """Connect to JS8Call API server and try to send the message."""
         print("connecting to", ":".join(map(str, self.server)))
         self.sock = socket(AF_INET, SOCK_STREAM)
+        self.sock.settimeout(10)
         self.sock.connect(self.server)
         self.connected = True
 
@@ -163,35 +182,47 @@ class Client(object):
             # get callsign
             self.send("STATION.GET_CALLSIGN")
 
-            # start a time to send the message on the interval
+            # start timer for max wait
+            print("Setting max wait to", self.max_wait, "seconds")
+            timeoutTimer = Timer(self.max_wait, self.timeout)
+            timeoutTimer.start()
+
+            # start a thread to send the message on the interval
             print("Starting to send...")
             timer = Thread(target=self.attemptToSend)
             # comment out the following line to disable sending msg
             timer.run()
 
-            while self.connected:
-
-                # block while waiting for message from js8call
-                content = self.sock.recv(65500)
-                if not content:
-                    break
-
+            while self.connected and not self.timed_out:
                 try:
-                    message = json.loads(content)
-                except ValueError:
-                    message = {}
 
-                if not message:
-                    continue
+                    # block while waiting for message from js8call
+                    content = self.sock.recv(65500)
+                    if not content:
+                        break
 
-                self.process(message)
+                    try:
+                        message = json.loads(content)
+                    except ValueError:
+                        message = {}
 
-                if self.gotAck:
-                    # if we get an ack, inform the timer to stop trying to send the message
-                    self.stop_timer = True
-                    break
+                    if not message:
+                        continue
+
+                    self.process(message)
+
+                    if self.gotAck:
+                        # if we get an ack, inform the timer to stop trying to send the message
+                        self.stop_timer = True
+                        break
+                except TimeoutError:
+                    # got socket time out waiting for a message, this is normal so skip it
+                    pass
+                except:
+                    print("Some other socket error")
 
         finally:
+            print("Closing things out...")
             if timer.is_alive:
                 self.stop_timer = True
             self.sock.close()
@@ -204,7 +235,14 @@ class Client(object):
 
 def main():
     args = parser.parse_args()
-    s = Client(args.receipient, args.message, args.server, args.tries, args.interval)
+    s = Client(
+        args.receipient,
+        args.message,
+        args.server,
+        args.tries,
+        args.interval,
+        args.maxwait,
+    )
     result = s.connect()
     sys.exit(not result)
 
