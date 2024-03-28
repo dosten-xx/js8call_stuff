@@ -1,4 +1,12 @@
-from __future__ import print_function
+"""
+Script to send a JS8Call message and wait for an ACK response.
+
+Based on https://planetarystatusreport.com/?p=646
+
+make sure you open port 2442 prior to opening JS8 application
+ubuntu command: sudo ufw allow 2442
+"""
+
 from socket import socket, AF_INET, SOCK_STREAM
 from threading import Thread
 
@@ -7,22 +15,33 @@ import json
 import sys
 import time
 
-# based on https://planetarystatusreport.com/?p=646
-
-# make sure you open port 2442 prior to opening JS8 application
-# ubuntu command: sudo ufw allow 2442
-
 # TODO DEO add max time to wait for ack
 
 parser = argparse.ArgumentParser(
     prog="JS8Call send and wait for ACK",
     description="Sends a message and waits for an ACK",
 )
-parser.add_argument("-r", "--receipient", required=True)
-parser.add_argument("-m", "--message", required=True)
-parser.add_argument("-t", "--tries", type=int, default=3)
-parser.add_argument("-i", "--interval", type=int, default=120)
-parser.add_argument("-s", "--server", default="127.0.0.1:2473")
+parser.add_argument(
+    "-r", "--receipient", required=True, help="Callsign of the receipient"
+)
+parser.add_argument("-m", "--message", required=True, help="Message to send")
+parser.add_argument(
+    "-t",
+    "--tries",
+    type=int,
+    default=3,
+    help="Number of times to attempt to send the message",
+)
+parser.add_argument(
+    "-i",
+    "--interval",
+    type=int,
+    default=120,
+    help="Interval (in seconds) between attempts",
+)
+parser.add_argument(
+    "-s", "--server", default="127.0.0.1:2473", help="JS8Call API server host and port"
+)
 
 
 def from_message(content):
@@ -39,13 +58,11 @@ def to_message(typ, value="", params=None):
 
 
 class Client(object):
-    server = ("127.0.0.1", 2473)  # js8call api server
-    # callsign to send message to
+    server = ("127.0.0.1", 2473)
     receipient = "XXXXXX"
-    # number of times to try to send the message (includes the first initial tx)
     retries = 1
-    retry_interval = 90  # seconds to wait between tries; this should be several minutes
-    message = "ACK ME BRO"  # message to send
+    retry_interval = 90
+    message = "ACK ME BRO"
 
     # internal variables
     gotAck = False  # did we get an ack
@@ -65,6 +82,7 @@ class Client(object):
         print("server=", self.server)
 
     def process(self, message):
+        """Process a message received from JS8Call."""
         typ = message.get("type", "")
         value = message.get("value", "")
         params = message.get("params", {})
@@ -97,15 +115,18 @@ class Client(object):
             self.processRxDirected(params)
 
     def processRxDirected(self, msg):
+        """Process an RX.DIRECTED message."""
         print("-> msg from ", msg.get("FROM"), "to", msg.get("TO"))
         if msg.get("TO") == self.callsign and msg.get("FROM") == self.receipient:
             print("-> Got a message for me:", msg.get("TEXT"))
             if msg.get("TEXT").contains("ACK"):
                 # got an ACK
+                print("Got ACK!")
                 # TODO DEO need to better recognize an ACK
                 self.gotAck = True
 
     def send(self, *args, **kwargs):
+        """Send a message to JS8Call."""
         params = kwargs.get("params", {})
         if "_ID" not in params:
             params["_ID"] = "{}".format(int(time.time() * 1000))
@@ -117,6 +138,7 @@ class Client(object):
         )  # remember to send the newline at the end :)
 
     def attemptToSend(self):
+        """Attempts to send a message every retry_interval seconds for retries attempts."""
         time.sleep(10)
         while True:
             if self.stop_timer:
@@ -131,6 +153,7 @@ class Client(object):
             time.sleep(self.retry_interval)
 
     def connect(self):
+        """Connect to JS8Call API server and try to send the message."""
         print("connecting to", ":".join(map(str, self.server)))
         self.sock = socket(AF_INET, SOCK_STREAM)
         self.sock.connect(self.server)
@@ -164,6 +187,7 @@ class Client(object):
                 self.process(message)
 
                 if self.gotAck:
+                    # if we get an ack, inform the timer to stop trying to send the message
                     self.stop_timer = True
                     break
 
