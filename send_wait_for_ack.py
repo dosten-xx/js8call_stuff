@@ -1,7 +1,24 @@
 """
 Script to send a JS8Call message and wait for an ACK response.
+Based on https://planetarystatusreport.com/?p=646.
 
-Based on https://planetarystatusreport.com/?p=646
+Be sure to have JS8Call starting and configured before running.
+
+Usage:
+python3 ./send_wait_for_ack.py <arguments detailed below>
+
+--help  shows help
+-r      receipient callsign (e.g. KN6KTN)
+-m      message to send (e.g. "HELLO BUDDY")
+-t      number of times to send the message; default is 3
+-i      interval (in seconds) between attemps to send the message; make sure this is
+        large enough to send the message, which should take minutes and wait for a response
+-w      time (in seconds) to wait for a response; this is inclusive of the attempts to send
+        the message
+-s      JS8Call server (host:port); default is "127.0.0.1:2442"
+
+Exit code of 0 means ack was received; other result means ack was not received.
+
 
 make sure you open port 2442 prior to opening JS8 application
 ubuntu command: sudo ufw allow 2442
@@ -38,7 +55,7 @@ parser.add_argument(
     help="Interval (in seconds) between attempts",
 )
 parser.add_argument(
-    "-s", "--server", default="127.0.0.1:2473", help="JS8Call API server host and port"
+    "-s", "--server", default="127.0.0.1:2442", help="JS8Call API server host and port"
 )
 parser.add_argument(
     "-w",
@@ -171,7 +188,8 @@ class Client(object):
         self.timed_out = True
 
     def connect(self):
-        """Connect to JS8Call API server and try to send the message."""
+        """Connect to JS8Call API server and try to send the message.
+        Returns True if ack received, False otherwise."""
         print("connecting to", ":".join(map(str, self.server)))
         self.sock = socket(AF_INET, SOCK_STREAM)
         self.sock.settimeout(10)
